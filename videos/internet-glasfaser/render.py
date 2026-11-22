@@ -54,22 +54,23 @@ def build_timeline():
     meta = json.load(open(os.path.join(HERE, "_clips.json")))
     lens = meta["lens"]
     speech = sum(lens)
-    lead, tail = 0.25, 0.9
+    lead, tail = 0.2, 0.9
     n_scene_breaks = sum(1 for i in range(1, len(SCRIPT)) if SCRIPT[i][0] != SCRIPT[i - 1][0])
     n_inner = len(SCRIPT) - 1 - n_scene_breaks
     free = TOTAL - speech - lead - tail
     # Szenenwechsel bekommen 2.2x so viel Pause wie Satzpausen
     unit = free / (n_inner + 2.2 * n_scene_breaks)
     if unit < 0.08:
-        raise SystemExit(f"Sprache zu lang ({speech:.1f}s) – length_scale verkleinern")
+        raise SystemExit(f"Sprache zu lang ({speech:.1f}s) – Tempo erhöhen")
     starts, t = [], lead
     for i, L in enumerate(lens):
         starts.append(t)
         t += L
         if i + 1 < len(SCRIPT):
             t += unit * (2.2 if SCRIPT[i + 1][0] != SCRIPT[i][0] else 1.0)
-    sents = [dict(scene=s[0], sub=s[2], start=st, end=st + L)
-             for s, st, L in zip(SCRIPT, starts, lens)]
+    words = meta.get("words") or [None] * len(lens)
+    sents = [dict(scene=s[0], sub=s[2], start=st, end=st + L, words=wd)
+             for s, st, L, wd in zip(SCRIPT, starts, lens, words)]
     return sents, meta["sr"]
 
 
@@ -517,13 +518,20 @@ def build_captions():
     chunks = []
     for s in SENTS:
         words = s["sub"].split()
-        weights = [len(w) + 2 for w in words]
-        tot = sum(weights)
-        dur = s["end"] - s["start"]
-        times, acc = [], s["start"]
-        for wgt in weights:
-            times.append(acc)
-            acc += dur * wgt / tot
+        if s["words"]:
+            # echte Wortzeiten (ElevenLabs); bei abweichender Wortzahl proportional zuordnen
+            sw = s["words"]
+            times = [s["start"] + sw[min(len(sw) - 1, round(k * (len(sw) - 1) / max(1, len(words) - 1)))][1]
+                     for k in range(len(words))] if len(sw) != len(words) else \
+                    [s["start"] + st for _, st in sw]
+        else:
+            weights = [len(w) + 2 for w in words]
+            tot = sum(weights)
+            dur = s["end"] - s["start"]
+            times, acc = [], s["start"]
+            for wgt in weights:
+                times.append(acc)
+                acc += dur * wgt / tot
         cur = []
         for w_, st in zip(words, times):
             cur.append((w_, st))
@@ -642,10 +650,8 @@ def build_audio():
 
     apath = os.path.join(HERE, "_mix.wav")
     fc = ("[0:a]aresample=44100,highpass=f=70,"
-          "equalizer=f=180:t=q:w=1:g=2,equalizer=f=3200:t=q:w=1.2:g=2.5,"
-          "equalizer=f=7500:t=q:w=1:g=-2,"
-          "acompressor=threshold=-20dB:ratio=3:attack=8:release=120:makeup=4,"
-          "aecho=0.8:0.85:28:0.06,asplit=2[v][vs];"
+          "acompressor=threshold=-20dB:ratio=2.5:attack=10:release=150:makeup=3,"
+          "asplit=2[v][vs];"
           "[1:a]volume=0.22[m];"
           "[m][vs]sidechaincompress=threshold=0.03:ratio=6:attack=30:release=350[md];"
           "[v][md]amix=inputs=2:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=9[out]")
