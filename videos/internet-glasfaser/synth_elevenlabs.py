@@ -82,6 +82,41 @@ def word_starts(al):
     return words
 
 
+def squeeze_pauses(wav, words, max_pause=0.22, min_pause=0.32):
+    """Kürzt Sprechpausen > min_pause auf max_pause (Wortzeiten werden angepasst)."""
+    win = int(0.01 * SR)
+    n = len(wav) // win
+    rms = np.sqrt(np.mean(wav[: n * win].reshape(n, win) ** 2, axis=1))
+    quiet = rms < 0.015 * np.max(np.abs(wav))
+    cuts, k = [], 0
+    while k < n:
+        if quiet[k]:
+            j = k
+            while j < n and quiet[j]:
+                j += 1
+            if (j - k) * win / SR > min_pause and k > 0 and j < n:
+                keep = int(max_pause * SR)
+                a = k * win + keep // 2
+                b = j * win - keep // 2
+                cuts.append((a, b))
+            k = j
+        else:
+            k += 1
+    if not cuts:
+        return wav, words
+    out, last = [], 0
+    for a, b in cuts:
+        out.append(wav[last:a])
+        last = b
+    out.append(wav[last:])
+    res = np.concatenate(out)
+
+    def shift(t):
+        s = t * SR
+        return (s - sum(b - a for a, b in cuts if b <= s)) / SR
+    return res, [(w, shift(t)) for w, t in words]
+
+
 def main():
     voice = sys.argv[1]
     speed = float(sys.argv[2]) if len(sys.argv) > 2 else 1.0
@@ -101,6 +136,7 @@ def main():
         b = min(len(wav), idx[-1] + int(0.08 * SR))
         wav = wav[a:b]
         words = [(w, max(0.0, s - a / SR)) for w, s in words]
+        wav, words = squeeze_pauses(wav, words)
         clips.append(wav)
         words_all.append(words)
         print(i, f"{len(wav) / SR:.2f}s", txt, flush=True)
