@@ -1,0 +1,4 @@
+_clips.npy
+_clips.json
+_*.wav
+__pycache__/
